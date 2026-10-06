@@ -1,0 +1,23 @@
+node_modules/
+dist/
+.nuxt/
+.output/
+.data/
+.cache/
+coverage/
+logs/
+*.log
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+Thumbs.db
+.idea/
+
+# Artefatos de build incremental do TypeScript
+*.tsbuildinfo
+
+# Template Materio original (o frontend é uma cópia adaptada)
+materio-vuetify-nuxtjs-admin-template-free-v1.1.0/
