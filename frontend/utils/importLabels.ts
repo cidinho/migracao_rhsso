@@ -19,7 +19,7 @@ export const rowStatusLabels: Record<RowStatus, Label & { description: string }>
     text: 'Sem alteração',
     icon: 'ri-checkbox-circle-line',
     color: 'secondary',
-    description: 'Usuário já existia e já possuía os grupos selecionados.',
+    description: 'Usuário já existia e já possuía os grupos válidos.',
   },
   ERRO: {
     text: 'Erro',
@@ -33,12 +33,19 @@ export const rowStatusLabels: Record<RowStatus, Label & { description: string }>
     color: 'warning',
     description: 'Importação cancelada antes desta linha.',
   },
+  IGNORADO: {
+    text: 'Ignorado',
+    icon: 'ri-forbid-line',
+    color: 'default',
+    description: 'Linha inválida ou removida na revisão; não foi importada.',
+  },
 }
 
 export const groupStatusLabels: Record<GroupStatus, Label> = {
   ADICIONADO: { text: 'Adicionado', icon: 'ri-add-circle-line', color: 'success' },
   JA_POSSUIA: { text: 'Já possuía', icon: 'ri-check-line', color: 'secondary' },
   FALHOU: { text: 'Falhou', icon: 'ri-close-circle-line', color: 'error' },
+  INEXISTENTE: { text: 'Inexistente', icon: 'ri-question-line', color: 'warning' },
 }
 
 export const jobStatusLabels: Record<JobStatus, Label> = {

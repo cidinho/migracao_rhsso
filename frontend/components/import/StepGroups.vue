@@ -193,7 +193,7 @@ function expandAll(value: boolean) {
         variant="outlined"
         color="secondary"
         prepend-icon="ri-arrow-left-line"
-        @click="store.step = 2"
+        @click="store.back()"
       >
         Voltar à revisão
       </VBtn>
@@ -208,7 +208,7 @@ function expandAll(value: boolean) {
           :disabled="!store.selectedGroups.length"
           append-icon="ri-arrow-right-line"
           :aria-describedby="store.selectedGroups.length ? undefined : 'groups-required'"
-          @click="store.step = 4"
+          @click="store.next()"
         >
           Revisar e confirmar
         </VBtn>

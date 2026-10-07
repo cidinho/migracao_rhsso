@@ -20,6 +20,8 @@ const cards = computed(() => {
   const statuses: RowStatus[] = ['CRIADO', 'GRUPOS_ADICIONADOS', 'SEM_ALTERACAO', 'ERRO']
   if (job.value?.counts.NAO_PROCESSADO)
     statuses.push('NAO_PROCESSADO')
+  if (job.value?.counts.IGNORADO)
+    statuses.push('IGNORADO')
 
   return statuses.map(status => ({ status, count: job.value?.counts[status] ?? 0, ...rowStatusLabels[status] }))
 })
@@ -72,6 +74,8 @@ function groupSummary(row: RowResult) {
     parts.push(`${count('JA_POSSUIA')} já possuía`)
   if (count('FALHOU'))
     parts.push(`${count('FALHOU')} com falha`)
+  if (count('INEXISTENTE'))
+    parts.push(`${count('INEXISTENTE')} inexistente(s)`)
 
   return parts.join(' · ') || '—'
 }
@@ -169,7 +173,10 @@ function newImport() {
         />
         <div class="d-flex justify-space-between text-body-2 mt-2">
           <span v-if="job.status === 'PREPARANDO'">Consultando os membros atuais dos grupos…</span>
-          <span v-else>{{ job.processed }} de {{ job.total }} linhas processadas</span>
+          <span v-else>
+            {{ job.processed }} de {{ job.total }} linhas processadas<template v-if="job.counts.IGNORADO">
+              · {{ job.counts.IGNORADO }} ignorada(s)</template>
+          </span>
           <span>{{ percent }}%</span>
         </div>
 

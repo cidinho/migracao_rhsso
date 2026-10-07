@@ -1,12 +1,13 @@
 import { BadRequestException, ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { normalizeRows, type RowInput } from '../csv/csv-import.js';
-import type { GroupsService } from '../groups/groups.service.js';
+import { normalizeRows, type ImportMode, type NormalizedRow, type RowInput } from '../csv/csv-import.js';
+import type { GroupRef, GroupsService } from '../groups/groups.service.js';
 import { WafBlockedError, errorMessage } from '../keycloak/errors.js';
 import type { KeycloakAdminClient } from '../keycloak/keycloak-admin.client.js';
 import type { AuditLogService } from './audit-log.service.js';
 import { ImportProcessor } from './import-processor.js';
-import { FINAL_STATUSES, type ImportJob } from './import.types.js';
+import { FINAL_STATUSES, type ImportJob, type MissingGroup, type RowResult } from './import.types.js';
+import { checkRowGroups } from './row-groups.js';
 
 export interface ImportJobsOptions {
   realm: string;
@@ -20,8 +21,11 @@ export interface ImportJobsOptions {
 
 export interface CreateJobInput {
   fileName: string;
-  rows: RowInput[];
-  groupIds: string[];
+  mode?: ImportMode;
+  /** Todas as linhas da planilha; as removidas na revisão chegam com `removed`. */
+  rows: (RowInput & { removed?: boolean })[];
+  /** Importação simples: grupos aplicados a todas as linhas. */
+  groupIds?: string[];
   sourceJobId?: string;
 }
 
@@ -48,49 +52,78 @@ export class ImportJobsService {
     if (input.rows.length > this.options.maxRows) {
       throw new BadRequestException(`Máximo de ${this.options.maxRows} linhas por importação.`);
     }
-    const rows = normalizeRows(input.rows);
-    const invalid = rows.filter((r) => r.errors.length);
-    if (invalid.length) {
+    const mode = input.mode ?? 'simples';
+    const removed = normalizeRows(input.rows.filter((r) => r.removed)).map((r) => ({
+      ...r,
+      errors: ['Removida na revisão'],
+    }));
+    let rows = normalizeRows(
+      input.rows.filter((r) => !r.removed),
+      mode,
+    );
+    // Árvore sem cache: um grupo apagado depois da Revisão precisa virar INEXISTENTE, não falha de atribuição.
+    if (mode === 'completa') rows = await checkRowGroups(this.groups, rows, true);
+    const valid = rows.filter((r) => !r.errors.length);
+    const ignored = [...removed, ...rows.filter((r) => r.errors.length)].sort((a, b) => a.line - b.line);
+    if (valid.length === 0) {
       throw new BadRequestException({
-        message: `${invalid.length} linha(s) inválida(s). Corrija ou remova antes de importar.`,
-        details: invalid.slice(0, 50).map((r) => ({ line: r.line, errors: r.errors })),
+        message: 'Nenhuma linha válida para importar. Corrija a planilha e envie novamente.',
+        details: ignored.slice(0, 50).map((r) => ({ line: r.line, errors: r.errors })),
       });
     }
 
-    const groupIds = [...new Set(input.groupIds)];
-    if (groupIds.length === 0) throw new BadRequestException('Selecione ao menos um grupo.');
-    const { found, missing } = await this.groups.resolve(groupIds);
-    if (missing.length) {
-      throw new BadRequestException(`Grupo(s) inexistente(s) no realm: ${missing.join(', ')}. Atualize a lista de grupos.`);
+    let groups: GroupRef[];
+    if (mode === 'simples') {
+      const groupIds = [...new Set(input.groupIds ?? [])];
+      if (groupIds.length === 0) throw new BadRequestException('Selecione ao menos um grupo.');
+      const { found, missing } = await this.groups.resolve(groupIds);
+      if (missing.length) {
+        throw new BadRequestException(`Grupo(s) inexistente(s) no realm: ${missing.join(', ')}. Atualize a lista de grupos.`);
+      }
+      groups = found;
+    } else {
+      const union = new Map<string, GroupRef>();
+      for (const row of valid) for (const g of rowGroupRefs(row)) union.set(g.id, g);
+      groups = [...union.values()].sort((a, b) => a.path.localeCompare(b.path));
     }
 
     const job: ImportJob = {
       id: randomUUID(),
+      mode,
       fileName: input.fileName || 'planilha.csv',
       sourceJobId: input.sourceJobId,
       realm: this.options.realm,
       createdAt: new Date(),
       status: 'PREPARANDO',
       prepared: false,
-      groups: found,
+      groups,
       requiredActions: [...this.options.requiredActions],
       emailVerified: this.options.emailVerified,
-      rows: rows.map(({ line, uid, username, email, firstName, lastName }) => ({
-        line,
-        uid,
-        username,
-        email,
-        firstName,
-        lastName,
+      rows: valid.map((r) => ({
+        line: r.line,
+        uid: r.uid,
+        username: r.username,
+        email: r.email,
+        firstName: r.firstName,
+        lastName: r.lastName,
+        ...(mode === 'completa' && {
+          groups: rowGroupRefs(r),
+          missingGroups: missingGroups(r),
+          requestedGroups: r.groups,
+        }),
       })),
-      results: [],
-      pending: rows.map((_, i) => i),
+      results: ignored.map(ignoredResult),
+      ignored: ignored.length,
+      pending: valid.map((_, i) => i),
       progress: new Map(),
       members: new Map(),
       control: { pauseRequested: false, cancelRequested: false, wafBlocked: false },
     };
     this.jobs.set(job.id, job);
-    this.logger.log(`Job ${job.id} criado: ${job.rows.length} linha(s), grupos ${job.groups.map((g) => g.path).join(', ')}`);
+    this.logger.log(
+      `Job ${job.id} (${mode}) criado: ${job.rows.length} linha(s), ${job.ignored} ignorada(s), ` +
+        `grupos ${job.groups.map((g) => g.path).join(', ')}`,
+    );
     this.start(job);
     return job;
   }
@@ -145,13 +178,15 @@ export class ImportJobsService {
     if (rows.length === 0) throw new BadRequestException('Não há linhas com erro para reprocessar.');
     return this.create({
       fileName: job.fileName,
+      mode: job.mode,
       sourceJobId: job.id,
-      groupIds: job.groups.map((g) => g.id),
+      ...(job.mode === 'simples' && { groupIds: job.groups.map((g) => g.id) }),
       rows: rows.map((r) => ({
         line: r.line,
         uid: r.uid,
         nome: [r.firstName, r.lastName].filter(Boolean).join(' '),
         email: r.email,
+        ...(job.mode === 'completa' && { groups: r.requestedGroups }),
       })),
     });
   }
@@ -259,4 +294,31 @@ export class ImportJobsService {
       if (job.finishedAt && job.finishedAt.getTime() < limit) this.jobs.delete(id);
     }
   }
+}
+
+function rowGroupRefs(row: NormalizedRow): GroupRef[] {
+  return (row.groupChecks ?? []).flatMap((g) =>
+    g.status === 'OK' && g.id ? [{ id: g.id, name: g.path.slice(g.path.lastIndexOf('/') + 1), path: g.path }] : [],
+  );
+}
+
+function missingGroups(row: NormalizedRow): MissingGroup[] {
+  return (row.groupChecks ?? []).flatMap((g) => (g.status === 'INEXISTENTE' ? [{ path: g.path, motivo: g.motivo ?? '' }] : []));
+}
+
+function ignoredResult(row: NormalizedRow): RowResult {
+  return {
+    linha: row.line,
+    uid: row.uid,
+    username: row.username,
+    email: row.email,
+    firstName: row.firstName,
+    lastName: row.lastName,
+    status: 'IGNORADO',
+    usuarioCriado: false,
+    acoesObrigatorias: [],
+    grupos: missingGroups(row).map((m) => ({ id: m.path, path: m.path, status: 'INEXISTENTE', erro: m.motivo })),
+    avisos: [],
+    erro: row.errors.join('; '),
+  };
 }

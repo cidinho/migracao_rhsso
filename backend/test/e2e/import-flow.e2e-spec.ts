@@ -98,7 +98,14 @@ describe('importação ponta a ponta contra o Keycloak 16 simulado', () => {
     firstJob = await waitFor(job.id, finished);
 
     expect(firstJob.status).toBe('CONCLUIDO');
-    expect(firstJob.counts).toEqual({ CRIADO: 2, GRUPOS_ADICIONADOS: 2, SEM_ALTERACAO: 1, ERRO: 0, NAO_PROCESSADO: 0 });
+    expect(firstJob.counts).toEqual({
+      CRIADO: 2,
+      GRUPOS_ADICIONADOS: 2,
+      SEM_ALTERACAO: 1,
+      ERRO: 0,
+      NAO_PROCESSADO: 0,
+      IGNORADO: 0,
+    });
 
     const rows = byUser(firstJob);
     expect(rows.get('anovo')).toMatchObject({ status: 'CRIADO', usuarioCriado: true, firstName: 'Ana', lastName: 'Maria Novo' });
@@ -152,7 +159,7 @@ describe('importação ponta a ponta contra o Keycloak 16 simulado', () => {
     expect([...raw.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
     const lines = res.text.trim().split(/\r?\n/);
     expect(lines[0]).toBe(
-      'Linha;UID;Username;Nome;Sobrenome;Email;Status;Ações obrigatórias;Grupos adicionados;Grupos que já possuía;Grupos com falha;Avisos;Mensagem',
+      'Linha;UID;Username;Nome;Sobrenome;Email;Status;Ações obrigatórias;Grupos adicionados;Grupos que já possuía;Grupos com falha;Grupos inexistentes;Avisos;Mensagem',
     );
     expect(lines).toHaveLength(6);
     expect(lines.find((l) => l.includes(';dlima;'))).toContain(`${USER} | ${ADMIN}`);

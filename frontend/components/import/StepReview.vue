@@ -6,12 +6,15 @@ const store = useImportStore()
 const onlyInvalid = ref(false)
 const search = ref('')
 
+const full = store.mode === 'completa'
+
 const headers = [
   { title: 'Linha', key: 'line', width: 80 },
   { title: 'Login (username)', key: 'username' },
   { title: 'Nome', key: 'firstName' },
   { title: 'Sobrenome', key: 'lastName' },
   { title: 'E-mail', key: 'email' },
+  ...(full ? [{ title: 'Grupos', key: 'groupChecks', sortable: false }] : []),
   { title: 'Situação', key: 'errors', sortable: false },
   { title: '', key: 'actions', sortable: false, align: 'end' as const, width: 64 },
 ]
@@ -49,6 +52,14 @@ function rowProps({ item }: { item: PreviewRow }) {
           variant="outlined"
         >
           {{ encodingLabel }} · separador "{{ store.preview.delimiter }}"
+        </VChip>
+        <VChip
+          v-if="full"
+          label
+          variant="outlined"
+          prepend-icon="ri-folder-line"
+        >
+          Grupos raiz: {{ store.preview.groupColumns.join(', ') }}
         </VChip>
       </div>
 
@@ -131,6 +142,15 @@ function rowProps({ item }: { item: PreviewRow }) {
       >
         Nenhuma linha válida para importar. Corrija a planilha e envie novamente.
       </VAlert>
+      <VAlert
+        v-if="full && store.missingGroups.length"
+        type="warning"
+        variant="tonal"
+        class="mb-4"
+      >
+        {{ store.missingGroups.length }} grupo(s) citado(s) na planilha não existem no realm e
+        <strong>não serão atribuídos</strong>; as linhas seguem com os demais grupos.
+      </VAlert>
 
       <div class="d-flex flex-wrap align-center gap-4 mb-4">
         <VTextField
@@ -169,6 +189,29 @@ function rowProps({ item }: { item: PreviewRow }) {
         items-per-page-text="Linhas por página"
         page-text="{0}-{1} de {2}"
       >
+        <template #item.groupChecks="{ item }">
+          <div class="d-flex flex-wrap gap-1 py-1">
+            <VChip
+              v-for="g in item.groupChecks ?? []"
+              :key="g.path"
+              size="small"
+              label
+              :color="g.status === 'OK' ? 'success' : 'warning'"
+              :prepend-icon="g.status === 'OK' ? 'ri-checkbox-circle-line' : 'ri-question-line'"
+            >
+              {{ g.path }}<span
+                v-if="g.status === 'INEXISTENTE'"
+                class="ms-1"
+              >(inexistente)</span>
+              <VTooltip
+                v-if="g.motivo"
+                activator="parent"
+              >
+                {{ g.motivo }}
+              </VTooltip>
+            </VChip>
+          </div>
+        </template>
         <template #item.errors="{ item }">
           <div
             v-if="item.errors.length"
@@ -217,7 +260,7 @@ function rowProps({ item }: { item: PreviewRow }) {
         variant="outlined"
         color="secondary"
         prepend-icon="ri-arrow-left-line"
-        @click="store.step = 1"
+        @click="store.back()"
       >
         Trocar arquivo
       </VBtn>
@@ -225,9 +268,9 @@ function rowProps({ item }: { item: PreviewRow }) {
         variant="elevated"
         :disabled="!store.validRows.length"
         append-icon="ri-arrow-right-line"
-        @click="store.step = 3; store.groupTree.length || store.loadGroups()"
+        @click="store.next()"
       >
-        Escolher grupos
+        {{ full ? 'Revisar e importar' : 'Escolher grupos' }}
       </VBtn>
     </VCardActions>
   </VCard>

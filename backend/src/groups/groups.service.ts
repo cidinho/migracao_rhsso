@@ -13,9 +13,13 @@ export interface GroupRef {
   path: string;
 }
 
+export type PathResolution = { ref: GroupRef; motivo?: undefined } | { ref?: undefined; motivo: string };
+
 interface Cache {
   tree: GroupNode[];
   byId: Map<string, GroupRef>;
+  byPath: Map<string, GroupRef>;
+  byLowerPath: Map<string, GroupRef[]>;
   fetchedAt: number;
 }
 
@@ -47,6 +51,21 @@ export class GroupsService {
     return { found, missing };
   }
 
+  /**
+   * Resolve paths `/<raiz>/<subgrupo>` da importação completa: path exato ou, se não houver,
+   * um único path igual sem diferenciar maiúsculas. Paths não encontrados são reconsultados uma vez sem cache.
+   */
+  async resolvePaths(paths: string[], refresh = false): Promise<Map<string, PathResolution>> {
+    const unique = [...new Set(paths)];
+    let cache = await this.load(refresh);
+    let result = resolveAll(cache, unique);
+    if (!refresh && [...result.values()].some((r) => !r.ref)) {
+      cache = await this.load(true);
+      result = resolveAll(cache, unique);
+    }
+    return result;
+  }
+
   private async load(refresh: boolean): Promise<Cache> {
     const fresh = this.cache && this.now() - this.cache.fetchedAt < this.ttlSeconds * 1000;
     if (!refresh && fresh) return this.cache!;
@@ -59,9 +78,14 @@ export class GroupsService {
   private async fetch(): Promise<Cache> {
     const raw = await this.kc.getGroupTree();
     const byId = new Map<string, GroupRef>();
+    const byPath = new Map<string, GroupRef>();
+    const byLowerPath = new Map<string, GroupRef[]>();
     const map = (g: KcGroup, parentPath: string): GroupNode => {
       const path = g.path || `${parentPath}/${g.name}`;
-      byId.set(g.id, { id: g.id, name: g.name, path });
+      const ref = { id: g.id, name: g.name, path };
+      byId.set(g.id, ref);
+      byPath.set(path, ref);
+      byLowerPath.set(path.toLowerCase(), [...(byLowerPath.get(path.toLowerCase()) ?? []), ref]);
       return {
         id: g.id,
         name: g.name,
@@ -70,9 +94,27 @@ export class GroupsService {
       };
     };
     const tree = raw.map((g) => map(g, '')).sort(byName);
-    this.cache = { tree, byId, fetchedAt: this.now() };
+    this.cache = { tree, byId, byPath, byLowerPath, fetchedAt: this.now() };
     return this.cache;
   }
+}
+
+function resolveAll(cache: Cache, paths: string[]): Map<string, PathResolution> {
+  return new Map(paths.map((path) => [path, resolveOne(cache, path)]));
+}
+
+function resolveOne(cache: Cache, path: string): PathResolution {
+  const [, root, ...rest] = path.split('/');
+  if (rest.length !== 1) return { motivo: 'Apenas um nível de subgrupo abaixo da raiz é aceito' };
+  if (!root || !rest[0]) return { motivo: 'Nome de grupo vazio' };
+  const exact = cache.byPath.get(path);
+  if (exact) return { ref: exact };
+  const candidates = cache.byLowerPath.get(path.toLowerCase()) ?? [];
+  if (candidates.length === 1) return { ref: candidates[0] };
+  if (candidates.length > 1) {
+    return { motivo: `Corresponde a mais de um grupo (${candidates.map((c) => c.path).join(', ')}); use as maiúsculas exatas` };
+  }
+  return { motivo: 'Grupo não existe no realm' };
 }
 
 function byName(a: GroupNode, b: GroupNode): number {

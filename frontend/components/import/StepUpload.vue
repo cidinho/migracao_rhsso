@@ -8,6 +8,7 @@ const dragging = ref(false)
 const errorId = 'upload-error'
 
 const limits = computed(() => store.health?.settings)
+const full = computed(() => store.mode === 'completa')
 
 function openPicker() {
   if (!store.uploading)
@@ -38,7 +39,7 @@ function onDrop(event: DragEvent) {
     <VCardText>
       <p class="text-body-1 mb-6">
         Envie a planilha com os usuários a importar. O arquivo deve estar em formato <strong>CSV</strong>
-        e conter as colunas <code>UID</code> (login), <code>NOME</code> e <code>Email</code>.
+        e conter as colunas <code>UID</code> (login), <code>NOME</code> e <code>Email</code>{{ full ? ', seguidas de uma coluna para cada grupo raiz, com os subgrupos de cada usuário' : '' }}.
       </p>
 
       <div
@@ -127,6 +128,9 @@ function onDrop(event: DragEvent) {
                 <th>UID</th>
                 <th>NOME</th>
                 <th>Email</th>
+                <th v-if="full">
+                  APP.PORTAL
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -134,6 +138,9 @@ function onDrop(event: DragEvent) {
                 <td>t_abc1234</td>
                 <td>Maria da Silva Santos</td>
                 <td>maria.santos@exemplo.com.br</td>
+                <td v-if="full">
+                  ROLE_PORTAL_USER|ROLE_PORTAL_ADMIN
+                </td>
               </tr>
             </tbody>
           </VTable>
@@ -149,11 +156,17 @@ function onDrop(event: DragEvent) {
             <li>Separador <code>;</code> ou <code>,</code> e acentos (UTF-8 ou padrão do Excel) são detectados automaticamente.</li>
             <li>O UID vira o login, em minúsculas.</li>
             <li>O primeiro nome vai para "nome" e o restante para "sobrenome".</li>
+            <template v-if="full">
+              <li>O cabeçalho de cada coluna de grupo é o nome do grupo raiz (ex.: <code>APP.PORTAL</code>).</li>
+              <li>Na célula, separe os subgrupos com <code>|</code>. Só um nível abaixo da raiz é aceito; a raiz sozinha não é atribuída.</li>
+              <li>Grupo que não existe no realm é sinalizado e não é atribuído; a linha segue com os demais.</li>
+              <li>Linha sem nenhum grupo válido não é importada. Nenhum grupo é removido do usuário.</li>
+            </template>
           </ul>
           <VBtn
             variant="tonal"
             prepend-icon="ri-download-2-line"
-            href="/api/imports/template.csv"
+            :href="full ? '/api/imports/template.csv?mode=completa' : '/api/imports/template.csv'"
             download
             class="mt-3"
           >

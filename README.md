@@ -1,6 +1,6 @@
 # Importação de usuários em lote no RH-SSO
 
-Aplicação web para criar usuários em lote no RH-SSO (Keycloak 16) a partir de uma planilha CSV e atribuir a eles, em massa, os grupos escolhidos numa árvore.
+Aplicação web para criar usuários em lote no RH-SSO (Keycloak 16) a partir de uma planilha CSV e atribuir a eles grupos: os mesmos grupos para todos, escolhidos numa árvore (**importação simples**), ou os grupos de cada usuário, informados na própria planilha (**importação completa**).
 
 - [1. Visão geral](#1-visão-geral)
 - [2. Arquitetura](#2-arquitetura)
@@ -21,6 +21,13 @@ O operador envia um CSV com as colunas `UID`, `NOME` e `Email`, confere as linha
 - **acrescenta apenas os grupos que faltam** se o usuário já existir, sem alterar nenhum outro dado dele;
 - **não faz nada** se o usuário já existir e já possuir todos os grupos, e informa isso no resultado ("já existia e já possuía os grupos").
 
+O menu lateral tem dois tipos de importação, com as mesmas regras acima:
+
+| Menu | Rota | Grupos |
+| --- | --- | --- |
+| **Importação simples** | `/` | Escolhidos numa árvore e atribuídos a **todos** os usuários da planilha. |
+| **Importação completa** | `/completa` | Informados **na planilha**, por usuário: uma coluna por grupo raiz, com os subgrupos na célula (seção [5.2](#52-importação-completa)). |
+
 A comunicação com o RH-SSO usa um client com *Client Credentials* configurado no backend. As requisições são enfileiradas e espaçadas para não acionar o WAF, e podem passar por um proxy corporativo.
 
 O repositório tem duas aplicações:
@@ -28,7 +35,7 @@ O repositório tem duas aplicações:
 | Pasta | Tecnologia | Papel |
 | --- | --- | --- |
 | `backend/` | NestJS 12 (Node.js) | Fala com o RH-SSO, valida o CSV, executa e acompanha as importações. |
-| `frontend/` | Nuxt 3 + Vuetify 3 (template Materio, tema escuro) | Assistente de importação em 5 etapas. |
+| `frontend/` | Nuxt 3 + Vuetify 3 (template Materio, tema escuro) | Assistentes da importação simples (5 etapas) e da completa (4 etapas). |
 
 ## 2. Arquitetura
 
@@ -54,9 +61,9 @@ Endpoints do backend (prefixo `/api`):
 | --- | --- |
 | `GET /health?refresh=true` | Testa a conexão com o RH-SSO e devolve o realm e os parâmetros de taxa. |
 | `GET /groups?refresh=true` | Árvore de grupos e subgrupos do realm (cache de `GROUPS_CACHE_TTL_SECONDS`). |
-| `GET /imports/template.csv` | Modelo de planilha. |
-| `POST /imports/preview` | Recebe o CSV (`multipart/form-data`, campo `file`) e devolve as linhas validadas. |
-| `POST /imports` | Cria e inicia uma importação (`fileName`, `groupIds`, `rows`). |
+| `GET /imports/template.csv?mode=completa` | Modelo de planilha. Sem `mode` (ou `mode=simples`), o modelo da importação simples. |
+| `POST /imports/preview?mode=completa` | Recebe o CSV (`multipart/form-data`, campo `file`) e devolve as linhas validadas; na completa, também os grupos de cada linha conferidos no realm. |
+| `POST /imports` | Cria e inicia uma importação: `fileName`, `mode` (`simples`, o padrão, ou `completa`), `groupIds` (só na simples) e `rows` (`line`, `uid`, `nome`, `email`, `groups` na completa e `removed` para as removidas na Revisão). |
 | `GET /imports/:id?since=n` | Situação do job e resultados novos desde o cursor `since`. |
 | `POST /imports/:id/pause` · `resume` · `cancel` | Controle do job. |
 | `POST /imports/:id/retry-errors` | Cria um novo job só com as linhas com erro ou não processadas. |
@@ -67,6 +74,7 @@ Endpoints do backend (prefixo `/api`):
 - **Upload de CSV** por arrastar e soltar ou pelo botão, acessível por teclado, com detecção automática de separador (`;` ou `,`) e de codificação (UTF-8 ou padrão do Excel).
 - **Revisão** das linhas antes de importar: linhas inválidas destacadas com o motivo, filtro "só inválidas", busca e remoção de linhas.
 - **Árvore de grupos** com busca (mantém os grupos pais visíveis), seleção independente de cada grupo e subgrupo, chips dos selecionados e botão para recarregar do RH-SSO.
+- **Importação completa**: grupos por usuário lidos da planilha, conferidos no realm já na Revisão; grupos inexistentes são sinalizados e não impedem a importação dos demais.
 - **Confirmação** com resumo: usuários, linhas ignoradas, grupos com caminho completo, realm de destino e estimativa de tempo.
 - **Execução controlada**: barra de progresso, contadores, botões **Pausar**, **Retomar** e **Cancelar**, e pausa automática se o WAF bloquear.
 - **Resultado** com cartões de totais que funcionam como filtro, tabela com o detalhe de cada grupo por usuário, avisos de divergência e as ações **Baixar relatório**, **Reprocessar erros** e **Nova importação**.
@@ -77,19 +85,19 @@ Endpoints do backend (prefixo `/api`):
 
 ## 4. Fluxo da importação
 
-### 4.1 As cinco etapas
+### 4.1 As etapas
 
 1. **Upload**: envie o CSV. O backend valida o arquivo e as linhas e devolve a prévia.
-2. **Revisão**: confira as linhas. As inválidas são ignoradas na importação; corrija a planilha e envie de novo se quiser incluí-las. Também é possível remover linhas válidas.
-3. **Grupos**: marque os grupos que serão atribuídos a **todos** os usuários da planilha. Marcar um grupo não marca os subgrupos, e vice-versa.
-4. **Confirmação**: confira o resumo e clique em **Importar**. O botão só fica habilitado com o RH-SSO acessível.
+2. **Revisão**: confira as linhas. As inválidas são ignoradas na importação (aparecem como `IGNORADO` no resultado e no relatório); corrija a planilha e envie de novo se quiser incluí-las. Também é possível remover linhas válidas. Na importação completa, a coluna **Grupos** mostra os grupos de cada linha, em verde os válidos e em amarelo os inexistentes.
+3. **Grupos** (só na importação simples): marque os grupos que serão atribuídos a **todos** os usuários da planilha. Marcar um grupo não marca os subgrupos, e vice-versa.
+4. **Confirmação**: confira o resumo e clique em **Importar**. O botão só fica habilitado com o RH-SSO acessível. Na importação completa, o resumo lista cada grupo com a quantidade de usuários que o receberão e os grupos inexistentes encontrados.
 5. **Resultado**: acompanhe o progresso e, ao final, consulte o resultado e baixe o relatório.
 
-Antes de iniciar, é possível voltar a qualquer etapa sem perder o que foi preenchido. Depois de iniciar, o assistente fica preso na etapa 5 até você clicar em **Nova importação**. Fechar a aba durante a execução pede confirmação, mas o job continua rodando no backend.
+A importação completa não tem a etapa **Grupos**, então tem 4 etapas. Antes de iniciar, é possível voltar a qualquer etapa sem perder o que foi preenchido. Depois de iniciar, o assistente fica preso na etapa **Resultado** até você clicar em **Nova importação**. Fechar a aba durante a execução pede confirmação, mas o job continua rodando no backend. As duas importações são independentes: dá para trocar de uma para a outra pelo menu sem perder o andamento.
 
 ### 4.2 O que acontece com cada usuário
 
-Antes de processar as linhas (situação **Preparando**), o backend lê os membros atuais de cada grupo selecionado. Em seguida, para cada linha:
+Antes de processar as linhas (situação **Preparando**), o backend lê os membros atuais de cada grupo selecionado (na importação completa, de cada grupo válido citado em alguma linha). Em seguida, para cada linha, com os grupos selecionados ou, na completa, os grupos válidos da própria linha:
 
 ```mermaid
 flowchart TD
@@ -115,9 +123,10 @@ flowchart TD
 | --- | --- | --- |
 | `CRIADO` | Criado | O usuário não existia: foi criado e recebeu os grupos. Deverá atualizar o perfil no próximo login. |
 | `GRUPOS_ADICIONADOS` | Grupos adicionados | O usuário já existia e recebeu os grupos que faltavam. |
-| `SEM_ALTERACAO` | Sem alteração | O usuário já existia e já possuía todos os grupos selecionados. Nada foi alterado. |
+| `SEM_ALTERACAO` | Sem alteração | O usuário já existia e já possuía todos os grupos válidos. Nada foi alterado. |
 | `ERRO` | Erro | A linha falhou, ou ao menos um grupo não pôde ser atribuído. A mensagem diz o motivo e se o usuário chegou a ser criado. |
 | `NAO_PROCESSADO` | Não processado | A importação foi cancelada antes de chegar a esta linha. |
+| `IGNORADO` | Ignorado | A linha não foi importada: era inválida (a mensagem diz o motivo) ou foi removida na Revisão. Não entra no progresso nem é reprocessada. |
 
 **Status por grupo** (no detalhe de cada linha e no relatório)
 
@@ -126,6 +135,7 @@ flowchart TD
 | `ADICIONADO` | Adicionado | O grupo foi atribuído agora. |
 | `JA_POSSUIA` | Já possuía | O usuário já era membro; nenhuma requisição foi feita. |
 | `FALHOU` | Falhou | A atribuição falhou; a mensagem do RH-SSO aparece junto. |
+| `INEXISTENTE` | Inexistente | Só na importação completa: o grupo citado na planilha não existe no realm (ou é ambíguo, ou tem mais de um nível) e não foi atribuído. Gera um aviso, mas **não** torna a linha `ERRO`. |
 
 **Situação do job**: `PREPARANDO` → `EXECUTANDO` ⇄ `PAUSADO` → `CONCLUIDO`, `CANCELADO` ou `FALHOU`. Um job vai para `FALHOU` quando não consegue nem preparar a execução, por exemplo se o client não tiver permissão para listar os membros dos grupos.
 
@@ -146,6 +156,8 @@ O motivo da ação obrigatória: o nome e o sobrenome são **derivados automatic
 - **Cancelar** pede confirmação. As linhas já processadas mantêm o resultado e as restantes ficam como `NAO_PROCESSADO`, podendo ser reprocessadas depois.
 
 ## 5. Formato do CSV
+
+### 5.1 Importação simples
 
 Baixe o modelo pelo link **Baixar modelo CSV** na etapa de Upload (ou em `GET /api/imports/template.csv`).
 
@@ -171,6 +183,27 @@ t_xyz9876;João Conceição;joao.conceicao@exemplo.com.br
 Linhas com problema aparecem na Revisão com o motivo: `UID vazio`, `UID não pode conter espaços`, `NOME vazio`, `E-mail vazio`, `E-mail com formato inválido` ou `UID duplicado (já aparece na linha N)`. Elas são ignoradas na importação.
 
 > No Excel, use **Arquivo › Salvar como › CSV UTF-8 (delimitado por vírgulas)**. O formato "CSV (separado por vírgulas)" também funciona.
+
+### 5.2 Importação completa
+
+A planilha tem as mesmas colunas `UID`, `NOME` e `Email`, com as mesmas regras, e depois delas **uma coluna para cada grupo raiz**. O cabeçalho da coluna é o nome do grupo raiz e a célula lista os **subgrupos** que o usuário deve receber, separados por `|`. Baixe o modelo pelo link **Baixar modelo CSV** na etapa de Upload da importação completa (ou em `GET /api/imports/template.csv?mode=completa`).
+
+```csv
+UID;NOME;Email;APP.PORTAL;APP.FINANCEIRO
+t_abc1234;Maria da Silva Santos;maria.santos@exemplo.com.br;ROLE_PORTAL_USER|ROLE_PORTAL_ADMIN;ROLE_FIN_CONSULTA
+t_xyz9876;João Conceição;joao.conceicao@exemplo.com.br;ROLE_PORTAL_USER;
+```
+
+No exemplo, Maria recebe `/APP.PORTAL/ROLE_PORTAL_USER`, `/APP.PORTAL/ROLE_PORTAL_ADMIN` e `/APP.FINANCEIRO/ROLE_FIN_CONSULTA`; João recebe só `/APP.PORTAL/ROLE_PORTAL_USER`.
+
+- Toda coluna além de `UID`, `NOME` e `Email` é uma coluna de grupo raiz. A planilha sem nenhuma coluna de grupo é recusada. Duas colunas com o mesmo grupo raiz são combinadas.
+- Na célula, os nomes são separados por `|`. Espaços nas pontas, nomes vazios e nomes repetidos são descartados. Célula vazia significa "nenhum subgrupo desse grupo raiz".
+- **Só um nível**: cada nome é um subgrupo **direto** do grupo raiz da coluna (`/<raiz>/<subgrupo>`). Nomes com `/` (mais níveis) são sinalizados como inexistentes. O grupo raiz sozinho nunca é atribuído.
+- O grupo é procurado pelo caminho exato e, se não houver, pelo caminho sem diferenciar maiúsculas e minúsculas, desde que só um grupo corresponda.
+- **Grupo inexistente** no realm: só esse grupo é sinalizado (status `INEXISTENTE`, em amarelo na Revisão e com aviso no resultado) e não é atribuído. A linha segue normalmente com os demais grupos.
+- **Linha sem grupo válido**: a linha é inválida e não é importada. O motivo é `Nenhum grupo informado` (todas as células de grupo vazias) ou `Nenhum grupo válido` (todos os grupos citados são inexistentes).
+- **Só acréscimo**: os grupos da planilha são acrescentados aos que o usuário já tem. Nenhum grupo é removido, mesmo que não esteja na planilha. Um usuário que já tem todos os grupos válidos fica `SEM_ALTERACAO`, com aviso se a linha também citar um grupo inexistente.
+- Os grupos são conferidos de novo ao iniciar a importação. Um grupo apagado do realm depois da Revisão aparece como `INEXISTENTE` no resultado.
 
 ## 6. Pré-requisitos
 
@@ -461,19 +494,19 @@ npm run lint
 
 O botão **Baixar relatório** (`GET /api/imports/:id/report.csv`) gera um CSV em UTF-8 com BOM e separador `;`, que abre direto no Excel. Há uma linha por usuário, com as colunas:
 
-`Linha` · `UID` · `Username` · `Nome` · `Sobrenome` · `Email` · `Status` · `Ações obrigatórias` · `Grupos adicionados` · `Grupos que já possuía` · `Grupos com falha` · `Avisos` · `Mensagem`
+`Linha` · `UID` · `Username` · `Nome` · `Sobrenome` · `Email` · `Status` · `Ações obrigatórias` · `Grupos adicionados` · `Grupos que já possuía` · `Grupos com falha` · `Grupos inexistentes` · `Avisos` · `Mensagem`
 
-Os grupos de uma mesma célula são separados por ` | `. O relatório fica disponível por `JOB_RETENTION_MINUTES` após o fim do job, e enquanto o backend não for reiniciado.
+Os grupos de uma mesma célula são separados por ` | `; nas colunas de falha e de inexistentes, cada grupo vem com o motivo. As linhas inválidas e as removidas na Revisão também aparecem, com status `IGNORADO` e o motivo em `Mensagem`. O relatório fica disponível por `JOB_RETENTION_MINUTES` após o fim do job, e enquanto o backend não for reiniciado.
 
 ### Reprocessar erros
 
-Quando o job termina com linhas `ERRO` ou `NAO_PROCESSADO`, o botão **Reprocessar erros** cria um **novo job** só com essas linhas, os mesmos grupos e as mesmas regras. O novo job aparece com o selo "Reprocessamento de erros". Como o processamento é idempotente, um usuário criado na primeira tentativa aparece agora como "Grupos adicionados" ou "Sem alteração", e não é criado de novo.
+Quando o job termina com linhas `ERRO` ou `NAO_PROCESSADO`, o botão **Reprocessar erros** cria um **novo job** só com essas linhas, os mesmos grupos (na importação completa, os grupos de cada linha, conferidos de novo no realm) e as mesmas regras. As linhas `IGNORADO` não são reprocessadas. O novo job aparece com o selo "Reprocessamento de erros". Como o processamento é idempotente, um usuário criado na primeira tentativa aparece agora como "Grupos adicionados" ou "Sem alteração", e não é criado de novo.
 
 ### Log de auditoria
 
 Ao fim de cada job (concluído, cancelado ou com falha), o backend acrescenta uma linha JSON em `AUDIT_LOG_DIR/importacoes-AAAA-MM.jsonl`. A linha traz:
 
-- identificação do job (`jobId`, `sourceJobId`, `fileName`, `realm`);
+- identificação do job (`jobId`, `sourceJobId`, `mode`, `fileName`, `realm`);
 - situação, horários e grupos (com caminho);
 - ações obrigatórias aplicadas e totais por status;
 - o resultado de cada linha.
@@ -508,4 +541,4 @@ O log não contém senhas nem o segredo do client. Guarde e faça rotação dess
 - **Uma instância só**: não rode vários backends atrás de um balanceador, porque cada um teria seus próprios jobs e seu próprio limite de taxa.
 - **Somente acréscimo**: a aplicação não altera dados de usuários existentes, não remove usuários de grupos e não define senhas.
 - **Realm fixo**: para outro realm, rode outra instância do backend com outro `.env`.
-- **Grupos grandes**: a preparação lê todos os membros dos grupos selecionados. Grupos com dezenas de milhares de membros tornam essa fase mais longa.
+- **Grupos grandes**: a preparação lê todos os membros dos grupos selecionados (na completa, de todos os grupos citados na planilha). Grupos com dezenas de milhares de membros tornam essa fase mais longa.
