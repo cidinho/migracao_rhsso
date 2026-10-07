@@ -88,12 +88,40 @@ Endpoints do backend (prefixo `/api`):
 ### 4.1 As etapas
 
 1. **Upload**: envie o CSV. O backend valida o arquivo e as linhas e devolve a prévia.
+
+   ![Etapa Upload da importação simples](docs/imagens/01-simples-upload.png)
+
 2. **Revisão**: confira as linhas. As inválidas são ignoradas na importação (aparecem como `IGNORADO` no resultado e no relatório); corrija a planilha e envie de novo se quiser incluí-las. Também é possível remover linhas válidas. Na importação completa, a coluna **Grupos** mostra os grupos de cada linha, em verde os válidos e em amarelo os inexistentes.
+
+   ![Etapa Revisão com 5 linhas válidas e 2 inválidas](docs/imagens/02-simples-revisao.png)
+
 3. **Grupos** (só na importação simples): marque os grupos que serão atribuídos a **todos** os usuários da planilha. Marcar um grupo não marca os subgrupos, e vice-versa.
+
+   ![Etapa Grupos com dois subgrupos de APP.PORTAL selecionados](docs/imagens/03-simples-grupos.png)
+
 4. **Confirmação**: confira o resumo e clique em **Importar**. O botão só fica habilitado com o RH-SSO acessível. Na importação completa, o resumo lista cada grupo com a quantidade de usuários que o receberão e os grupos inexistentes encontrados.
+
+   ![Etapa Confirmação com o resumo da importação](docs/imagens/04-simples-confirmacao.png)
+
 5. **Resultado**: acompanhe o progresso e, ao final, consulte o resultado e baixe o relatório.
 
+   ![Etapa Resultado com usuários criados, com grupos adicionados, sem alteração e ignorados](docs/imagens/05-simples-resultado.png)
+
 A importação completa não tem a etapa **Grupos**, então tem 4 etapas. Antes de iniciar, é possível voltar a qualquer etapa sem perder o que foi preenchido. Depois de iniciar, o assistente fica preso na etapa **Resultado** até você clicar em **Nova importação**. Fechar a aba durante a execução pede confirmação, mas o job continua rodando no backend. As duas importações são independentes: dá para trocar de uma para a outra pelo menu sem perder o andamento.
+
+Na importação completa, a Revisão confere os grupos de cada linha no realm. No exemplo, `ROLE_PORTAL_GESTOR` não existe: a linha de Daniel segue com os demais grupos, e a linha de Otávio, que só cita um grupo inexistente, é ignorada.
+
+![Revisão da importação completa com grupos válidos e inexistentes](docs/imagens/06-completa-revisao.png)
+
+A Confirmação mostra quantos usuários receberão cada grupo e lista os grupos inexistentes, que não serão atribuídos.
+
+![Confirmação da importação completa](docs/imagens/07-completa-confirmacao.png)
+
+No Resultado, o detalhe de cada linha mostra a situação de cada grupo, incluindo os inexistentes.
+
+![Resultado da importação completa com o detalhe de uma linha aberto](docs/imagens/08-completa-resultado.png)
+
+> As telas acima foram capturadas com o simulador do Keycloak (seção [8.2](#82-desenvolvimento)) e dados fictícios.
 
 ### 4.2 O que acontece com cada usuário
 
