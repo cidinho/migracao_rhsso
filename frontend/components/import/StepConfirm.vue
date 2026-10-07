@@ -139,9 +139,7 @@ const estimate = computed(() => {
             <strong>Usuários novos</strong> serão criados sem senha e receberão os grupos{{ full ? ' da própria linha' : '' }}.
           </li>
           <li v-if="requiredActions.length">
-            Usuários novos deverão {{ requiredActions.map(a => requiredActionLabels[a] ?? a).join(' e ') }} no próximo login<template v-if="requiredActions.includes('UPDATE_PROFILE')">
-              , pois a divisão do NOME em nome e sobrenome foi feita automaticamente
-            </template>.
+            Usuários novos deverão {{ requiredActions.map(a => requiredActionLabels[a] ?? a).join(' e ') }} no próximo login{{ requiredActions.includes('UPDATE_PROFILE') ? ', pois a divisão do NOME em nome e sobrenome foi feita automaticamente' : '' }}.
           </li>
           <li><strong>Usuários existentes</strong> receberão apenas os grupos que ainda não possuem; nenhum outro dado será alterado.</li>
           <li>Quem já possuir todos os grupos ficará como "Sem alteração".</li>
