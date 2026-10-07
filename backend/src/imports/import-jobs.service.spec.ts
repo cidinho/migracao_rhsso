@@ -8,15 +8,22 @@ import { toReportCsv, toView } from './job-view.js';
 
 const USER = 'g-user';
 const ADMIN = 'g-admin';
+const FIN = 'g-fin-consulta';
+const P_USER = '/APP.PORTAL/ROLE_PORTAL_USER';
+const P_ADMIN = '/APP.PORTAL/ROLE_PORTAL_ADMIN';
+const P_FIN = '/APP.FINANCEIRO/ROLE_FIN_CONSULTA';
 
 function setup(options: Partial<ImportJobsOptions> = {}) {
   const kc = new FakeKeycloak()
     .addGroup('g-ws', '/APP.PORTAL')
     .addGroup(USER, '/APP.PORTAL/ROLE_PORTAL_USER')
-    .addGroup(ADMIN, '/APP.PORTAL/ROLE_PORTAL_ADMIN');
+    .addGroup(ADMIN, '/APP.PORTAL/ROLE_PORTAL_ADMIN')
+    .addGroup('g-fin', '/APP.FINANCEIRO')
+    .addGroup(FIN, '/APP.FINANCEIRO/ROLE_FIN_CONSULTA');
   const client = kc as unknown as KeycloakAdminClient;
   const audit = { write: vi.fn(async () => undefined) };
-  const svc = new ImportJobsService(client, new GroupsService(client, 300), audit as unknown as AuditLogService, {
+  const groups = new GroupsService(client, 300);
+  const svc = new ImportJobsService(client, groups, audit as unknown as AuditLogService, {
     realm: 'teste',
     maxConcurrency: 1,
     membersPageSize: 500,
@@ -26,7 +33,7 @@ function setup(options: Partial<ImportJobsOptions> = {}) {
     retentionMinutes: 120,
     ...options,
   });
-  return { kc, svc, audit };
+  return { kc, svc, audit, groups };
 }
 
 const row = (line: number, uid: string, nome = 'Maria da Silva', email = `${uid.toLowerCase()}@exemplo.com`) => ({
@@ -250,5 +257,159 @@ describe('ImportJobsService', () => {
     expect(lines[0]).toContain('Linha;UID;Username;Nome;Sobrenome;Email;Status;Ações obrigatórias');
     expect(lines[1]).toMatch(/^3;r2;r2;.*SEM_ALTERACAO/);
     expect(lines[2]).toMatch(/^5;r1;r1;Maria;da Silva;.*CRIADO;UPDATE_PROFILE;/);
+  });
+
+  it('registra linhas inválidas e removidas como IGNORADO e importa as válidas', async () => {
+    const { kc, svc } = setup();
+    const job = await svc.create({
+      fileName: 'u.csv',
+      groupIds: [USER],
+      rows: [row(2, 'ok1'), row(3, 'x', 'Nome', 'invalido'), { ...row(4, 'rem1'), removed: true }],
+    });
+    await svc.idle(job.id);
+    const view = toView(job);
+    expect(view).toMatchObject({ total: 1, processed: 1, mode: 'simples' });
+    expect(view.counts).toMatchObject({ CRIADO: 1, IGNORADO: 2 });
+    expect(job.results.filter((r) => r.status === 'IGNORADO').map((r) => [r.linha, r.erro])).toEqual([
+      [3, 'E-mail com formato inválido'],
+      [4, 'Removida na revisão'],
+    ]);
+    expect(kc.byUsername('x')).toBeUndefined();
+    expect(kc.byUsername('rem1')).toBeUndefined();
+    const report = toReportCsv(job);
+    expect(report).toMatch(/\r\n3;x;x;.*;IGNORADO;.*E-mail com formato inválido/);
+  });
+
+  it('removida na revisão não conta como UID duplicado', async () => {
+    const { svc } = setup();
+    const job = await svc.create({
+      fileName: 'u.csv',
+      groupIds: [USER],
+      rows: [{ ...row(2, 'dup'), removed: true }, row(3, 'DUP')],
+    });
+    await svc.idle(job.id);
+    expect(job.results.map((r) => [r.linha, r.status])).toEqual([
+      [2, 'IGNORADO'],
+      [3, 'CRIADO'],
+    ]);
+  });
+
+  describe('importação completa', () => {
+    const full = (line: number, uid: string, groups: string[], nome?: string, email?: string) => ({
+      ...row(line, uid, nome, email),
+      groups,
+    });
+
+    async function runFull(svc: ImportJobsService, rows: (ReturnType<typeof row> & { groups?: string[] })[]) {
+      const job = await svc.create({ fileName: 'u.csv', mode: 'completa', rows });
+      await svc.idle(job.id);
+      return job;
+    }
+
+    it('atribui a cada usuário só os grupos da própria linha', async () => {
+      const { kc, svc } = setup();
+      const job = await runFull(svc, [full(2, 'a1', [P_USER, P_ADMIN]), full(3, 'b2', [P_FIN])]);
+      expect(job.status).toBe('CONCLUIDO');
+      expect(job.groups.map((g) => g.id).sort()).toEqual([ADMIN, FIN, USER].sort());
+      expect(kc.groupsOf(kc.byUsername('a1')!.id).sort()).toEqual([ADMIN, USER]);
+      expect(kc.groupsOf(kc.byUsername('b2')!.id)).toEqual([FIN]);
+      expect(job.results.map((r) => r.status)).toEqual(['CRIADO', 'CRIADO']);
+      expect(toView(job).mode).toBe('completa');
+    });
+
+    it('grupo inexistente não é atribuído, vira INEXISTENTE com aviso e não torna a linha ERRO', async () => {
+      const { kc, svc } = setup();
+      const job = await runFull(svc, [full(2, 'a1', [P_USER, '/APP.PORTAL/ROLE_NAO_EXISTE'])]);
+      const [r] = job.results;
+      expect(r.status).toBe('CRIADO');
+      expect(r.grupos).toEqual([
+        { id: USER, path: P_USER, status: 'ADICIONADO' },
+        { id: '/APP.PORTAL/ROLE_NAO_EXISTE', path: '/APP.PORTAL/ROLE_NAO_EXISTE', status: 'INEXISTENTE', erro: 'Grupo não existe no realm' },
+      ]);
+      expect(r.avisos).toEqual(['Grupo /APP.PORTAL/ROLE_NAO_EXISTE não foi atribuído: Grupo não existe no realm.']);
+      expect(kc.groupsOf(kc.byUsername('a1')!.id)).toEqual([USER]);
+    });
+
+    it('usuário que já tem todos os grupos válidos fica SEM_ALTERACAO com aviso do inexistente', async () => {
+      const { kc, svc } = setup();
+      kc.addUser('c1', {}, [USER]);
+      const job = await runFull(svc, [full(2, 'c1', [P_USER, '/APP.PORTAL/ROLE_X'], 'Nome Existente', 'c1@exemplo.com')]);
+      expect(job.results[0].status).toBe('SEM_ALTERACAO');
+      expect(job.results[0].grupos.map((g) => g.status)).toEqual(['JA_POSSUIA', 'INEXISTENTE']);
+      expect(job.results[0].avisos).toHaveLength(1);
+      expect(kc.writes()).toBe(0);
+    });
+
+    it('linha sem grupo ou só com grupos inexistentes fica IGNORADO', async () => {
+      const { kc, svc } = setup();
+      const job = await runFull(svc, [full(2, 'a1', [P_USER]), full(3, 'b2', []), full(4, 'c3', ['/APP.PORTAL/NADA'])]);
+      expect(job.results.map((r) => [r.linha, r.status, r.erro])).toEqual([
+        [3, 'IGNORADO', 'Nenhum grupo informado'],
+        [4, 'IGNORADO', 'Nenhum grupo válido'],
+        [2, 'CRIADO', undefined],
+      ]);
+      expect(job.results[1].grupos.map((g) => g.status)).toEqual(['INEXISTENTE']);
+      expect(kc.byUsername('b2')).toBeUndefined();
+      expect(kc.byUsername('c3')).toBeUndefined();
+      expect(toView(job)).toMatchObject({ total: 1, processed: 1 });
+    });
+
+    it('recusa o job quando nenhuma linha tem grupo válido', async () => {
+      const { svc } = setup();
+      await expect(svc.create({ fileName: 'u.csv', mode: 'completa', rows: [full(2, 'a1', ['/APP.PORTAL/NADA'])] })).rejects.toThrow(
+        /Nenhuma linha válida/,
+      );
+    });
+
+    it('grupo apagado depois da revisão vira INEXISTENTE', async () => {
+      const { kc, svc, groups } = setup();
+      await groups.resolvePaths([P_USER, P_ADMIN]);
+      const portal = kc.groups.find((g) => g.path === '/APP.PORTAL')!;
+      portal.subGroups = portal.subGroups!.filter((g) => g.id !== ADMIN);
+      const job = await runFull(svc, [full(2, 'a1', [P_USER, P_ADMIN])]);
+      expect(job.results[0].status).toBe('CRIADO');
+      expect(job.results[0].grupos.map((g) => [g.path, g.status])).toEqual([
+        [P_USER, 'ADICIONADO'],
+        [P_ADMIN, 'INEXISTENTE'],
+      ]);
+      expect(kc.calls.filter((c) => c.op === 'addUserToGroup')).toHaveLength(1);
+    });
+
+    it('levanta os membros da união dos grupos uma vez por grupo', async () => {
+      const { kc, svc } = setup();
+      await runFull(svc, [full(2, 'a1', [P_USER]), full(3, 'b2', [P_USER, P_FIN])]);
+      expect(kc.calls.filter((c) => c.op === 'listGroupMembers').map((c) => c.args[0]).sort()).toEqual([FIN, USER].sort());
+    });
+
+    it('reprocessa os erros com os grupos de cada linha, sem as ignoradas', async () => {
+      const { kc, svc } = setup();
+      kc.failAddGroupWhen = (_u, groupId) => groupId === FIN;
+      const first = await runFull(svc, [
+        full(2, 'a1', [P_USER]),
+        full(3, 'b2', [P_FIN, '/APP.PORTAL/NADA']),
+        full(4, 'c3', []),
+      ]);
+      expect(toView(first).counts).toMatchObject({ CRIADO: 1, ERRO: 1, IGNORADO: 1 });
+
+      kc.failAddGroupWhen = undefined;
+      const retry = await svc.retryErrors(first.id);
+      await svc.idle(retry.id);
+      expect(retry.mode).toBe('completa');
+      expect(retry.rows.map((r) => r.line)).toEqual([3]);
+      expect(retry.results).toHaveLength(1);
+      expect(retry.results[0].status).toBe('GRUPOS_ADICIONADOS');
+      expect(retry.results[0].grupos.map((g) => [g.path, g.status])).toEqual([
+        [P_FIN, 'ADICIONADO'],
+        ['/APP.PORTAL/NADA', 'INEXISTENTE'],
+      ]);
+    });
+
+    it('relatório traz a coluna de grupos inexistentes com o motivo', async () => {
+      const { svc } = setup();
+      const job = await runFull(svc, [full(2, 'a1', [P_USER, '/APP.PORTAL/NADA'])]);
+      const [header, line] = toReportCsv(job).replace('\uFEFF', '').trim().split('\r\n');
+      expect(header).toContain('Grupos com falha;Grupos inexistentes;Avisos');
+      expect(line).toContain(';/APP.PORTAL/NADA: Grupo não existe no realm;');
+    });
   });
 });

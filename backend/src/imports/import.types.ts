@@ -1,13 +1,19 @@
+import type { ImportMode } from '../csv/csv-import.js';
 import type { GroupRef } from '../groups/groups.service.js';
 import type { KcUser } from '../keycloak/keycloak-admin.client.js';
 
 export type JobStatus = 'PREPARANDO' | 'EXECUTANDO' | 'PAUSADO' | 'CONCLUIDO' | 'CANCELADO' | 'FALHOU';
-export type RowStatus = 'CRIADO' | 'GRUPOS_ADICIONADOS' | 'SEM_ALTERACAO' | 'ERRO' | 'NAO_PROCESSADO';
-export type GroupStatus = 'ADICIONADO' | 'JA_POSSUIA' | 'FALHOU';
+export type RowStatus = 'CRIADO' | 'GRUPOS_ADICIONADOS' | 'SEM_ALTERACAO' | 'ERRO' | 'NAO_PROCESSADO' | 'IGNORADO';
+export type GroupStatus = 'ADICIONADO' | 'JA_POSSUIA' | 'FALHOU' | 'INEXISTENTE';
 export type PauseReason = 'WAF' | 'MANUAL';
 
-export const ROW_STATUSES: RowStatus[] = ['CRIADO', 'GRUPOS_ADICIONADOS', 'SEM_ALTERACAO', 'ERRO', 'NAO_PROCESSADO'];
+export const ROW_STATUSES: RowStatus[] = ['CRIADO', 'GRUPOS_ADICIONADOS', 'SEM_ALTERACAO', 'ERRO', 'NAO_PROCESSADO', 'IGNORADO'];
 export const FINAL_STATUSES: JobStatus[] = ['CONCLUIDO', 'CANCELADO', 'FALHOU'];
+
+export interface MissingGroup {
+  path: string;
+  motivo: string;
+}
 
 export interface ImportRow {
   line: number;
@@ -16,6 +22,11 @@ export interface ImportRow {
   email: string;
   firstName: string;
   lastName: string;
+  /** Importação completa: grupos válidos da linha; na simples, valem os grupos do job. */
+  groups?: GroupRef[];
+  missingGroups?: MissingGroup[];
+  /** Importação completa: paths pedidos na planilha, reenviados no reprocessamento. */
+  requestedGroups?: string[];
 }
 
 export interface GroupResult {
@@ -50,6 +61,7 @@ export interface RowProgress {
 
 export interface ImportJob {
   id: string;
+  mode: ImportMode;
   fileName: string;
   sourceJobId?: string;
   realm: string;
@@ -64,7 +76,9 @@ export interface ImportJob {
   requiredActions: string[];
   emailVerified: boolean;
   rows: ImportRow[];
+  /** Começa com as linhas IGNORADO; as processadas são acrescentadas depois delas. */
   results: RowResult[];
+  ignored: number;
   pending: number[];
   progress: Map<number, RowProgress>;
   members: Map<string, Set<string>>;
@@ -73,6 +87,7 @@ export interface ImportJob {
 
 export interface JobView {
   id: string;
+  mode: ImportMode;
   fileName: string;
   sourceJobId?: string;
   realm: string;

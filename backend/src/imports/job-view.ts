@@ -11,6 +11,7 @@ export function toView(job: ImportJob, since = 0): JobView {
   const from = Math.max(0, Math.min(since, job.results.length));
   return {
     id: job.id,
+    mode: job.mode,
     fileName: job.fileName,
     sourceJobId: job.sourceJobId,
     realm: job.realm,
@@ -21,7 +22,7 @@ export function toView(job: ImportJob, since = 0): JobView {
     startedAt: job.startedAt?.toISOString(),
     finishedAt: job.finishedAt?.toISOString(),
     total: job.rows.length,
-    processed: job.results.length,
+    processed: job.results.length - job.ignored,
     counts: countByStatus(job.results),
     groups: job.groups,
     requiredActions: job.requiredActions,
@@ -33,6 +34,11 @@ export function toView(job: ImportJob, since = 0): JobView {
 export function toReportCsv(job: ImportJob): string {
   const pathsWith = (r: RowResult, status: string) =>
     r.grupos.filter((g) => g.status === status).map((g) => g.path).join(' | ');
+  const pathsWithReason = (r: RowResult, status: string) =>
+    r.grupos
+      .filter((g) => g.status === status)
+      .map((g) => `${g.path}: ${g.erro ?? ''}`)
+      .join(' | ');
   const rows = [...job.results]
     .sort((a, b) => a.linha - b.linha)
     .map((r) => [
@@ -46,7 +52,8 @@ export function toReportCsv(job: ImportJob): string {
       r.acoesObrigatorias.join(' | '),
       pathsWith(r, 'ADICIONADO'),
       pathsWith(r, 'JA_POSSUIA'),
-      r.grupos.filter((g) => g.status === 'FALHOU').map((g) => `${g.path}: ${g.erro ?? ''}`).join(' | '),
+      pathsWithReason(r, 'FALHOU'),
+      pathsWithReason(r, 'INEXISTENTE'),
       r.avisos.join(' | '),
       r.erro ?? '',
     ]);
@@ -68,6 +75,7 @@ export function toReportCsv(job: ImportJob): string {
         'Grupos adicionados',
         'Grupos que já possuía',
         'Grupos com falha',
+        'Grupos inexistentes',
         'Avisos',
         'Mensagem',
       ],

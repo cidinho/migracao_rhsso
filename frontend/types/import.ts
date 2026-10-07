@@ -1,6 +1,8 @@
 export type JobStatus = 'PREPARANDO' | 'EXECUTANDO' | 'PAUSADO' | 'CONCLUIDO' | 'CANCELADO' | 'FALHOU'
-export type RowStatus = 'CRIADO' | 'GRUPOS_ADICIONADOS' | 'SEM_ALTERACAO' | 'ERRO' | 'NAO_PROCESSADO'
-export type GroupStatus = 'ADICIONADO' | 'JA_POSSUIA' | 'FALHOU'
+export type RowStatus = 'CRIADO' | 'GRUPOS_ADICIONADOS' | 'SEM_ALTERACAO' | 'ERRO' | 'NAO_PROCESSADO' | 'IGNORADO'
+export type GroupStatus = 'ADICIONADO' | 'JA_POSSUIA' | 'FALHOU' | 'INEXISTENTE'
+export type ImportMode = 'simples' | 'completa'
+export type StepName = 'upload' | 'review' | 'groups' | 'confirm' | 'result'
 
 export interface HealthResponse {
   status: 'ok' | 'erro'
@@ -26,12 +28,23 @@ export interface PreviewRow {
   firstName: string
   lastName: string
   errors: string[]
+  groups?: string[]
+  groupChecks?: PreviewGroup[]
+}
+
+export interface PreviewGroup {
+  path: string
+  status: 'OK' | 'INEXISTENTE'
+  id?: string
+  motivo?: string
 }
 
 export interface PreviewResult {
   fileName: string
+  mode: ImportMode
   encoding: string
   delimiter: string
+  groupColumns: string[]
   total: number
   validCount: number
   invalidCount: number
@@ -75,6 +88,7 @@ export interface RowResult {
 
 export interface JobView {
   id: string
+  mode: ImportMode
   fileName: string
   sourceJobId?: string
   realm: string

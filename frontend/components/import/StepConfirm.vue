@@ -12,15 +12,22 @@ const connected = computed(() => store.health?.status === 'ok')
 
 const requiredActions = computed(() => settings.value?.newUserRequiredActions ?? [])
 
+const full = store.mode === 'completa'
+const groupCount = computed(() => (full ? store.rowGroups.length : store.selectedGroups.length))
+
 const estimate = computed(() => {
   if (!settings.value)
     return null
   const users = store.validRows.length
-  const groups = store.selectedGroups.length
+
+  const assignments = full
+    ? store.rowGroups.reduce((sum, g) => sum + g.count, 0)
+    : users * store.selectedGroups.length
+
   const perRequest = Math.max(settings.value.minIntervalMs, ASSUMED_LATENCY_MS / settings.value.maxConcurrency)
-  const prefetch = groups
+  const prefetch = groupCount.value
   const min = (prefetch + users) * perRequest
-  const max = (prefetch + users * (2 + groups)) * perRequest
+  const max = (prefetch + users * 2 + assignments) * perRequest
 
   return { min: formatDuration(min), max: formatDuration(max) }
 })
@@ -71,9 +78,26 @@ const estimate = computed(() => {
         >
           <div class="border rounded pa-4 h-100">
             <h3 class="text-subtitle-1 font-weight-medium mb-3">
-              Grupos que serão atribuídos ({{ store.selectedGroups.length }})
+              Grupos que serão atribuídos ({{ groupCount }})
             </h3>
-            <div class="d-flex flex-wrap gap-2">
+            <div
+              v-if="full"
+              class="d-flex flex-wrap gap-2"
+            >
+              <VChip
+                v-for="group in store.rowGroups"
+                :key="group.path"
+                label
+                color="primary"
+                prepend-icon="ri-group-line"
+              >
+                {{ group.path }} · {{ group.count }} usuário(s)
+              </VChip>
+            </div>
+            <div
+              v-else
+              class="d-flex flex-wrap gap-2"
+            >
               <VChip
                 v-for="group in store.selectedGroups"
                 :key="group.id"
@@ -84,6 +108,22 @@ const estimate = computed(() => {
                 {{ group.path }}
               </VChip>
             </div>
+            <template v-if="full && store.missingGroups.length">
+              <h3 class="text-subtitle-1 font-weight-medium mt-5 mb-3">
+                Grupos inexistentes, não serão atribuídos ({{ store.missingGroups.length }})
+              </h3>
+              <div class="d-flex flex-wrap gap-2">
+                <VChip
+                  v-for="group in store.missingGroups"
+                  :key="group.path"
+                  label
+                  color="warning"
+                  prepend-icon="ri-question-line"
+                >
+                  {{ group.path }} · {{ group.count }} linha(s)
+                </VChip>
+              </div>
+            </template>
           </div>
         </VCol>
       </VRow>
@@ -95,7 +135,9 @@ const estimate = computed(() => {
         title="O que vai acontecer"
       >
         <ul class="ps-4">
-          <li><strong>Usuários novos</strong> serão criados sem senha e receberão os grupos.</li>
+          <li>
+            <strong>Usuários novos</strong> serão criados sem senha e receberão os grupos{{ full ? ' da própria linha' : '' }}.
+          </li>
           <li v-if="requiredActions.length">
             Usuários novos deverão {{ requiredActions.map(a => requiredActionLabels[a] ?? a).join(' e ') }} no próximo login<template v-if="requiredActions.includes('UPDATE_PROFILE')">
               , pois a divisão do NOME em nome e sobrenome foi feita automaticamente
@@ -103,6 +145,9 @@ const estimate = computed(() => {
           </li>
           <li><strong>Usuários existentes</strong> receberão apenas os grupos que ainda não possuem; nenhum outro dado será alterado.</li>
           <li>Quem já possuir todos os grupos ficará como "Sem alteração".</li>
+          <li v-if="full">
+            Nenhum grupo é removido. Grupos inexistentes ficam registrados no resultado e no relatório.
+          </li>
         </ul>
       </VAlert>
 
@@ -141,16 +186,16 @@ const estimate = computed(() => {
         variant="outlined"
         color="secondary"
         prepend-icon="ri-arrow-left-line"
-        @click="store.step = 3"
+        @click="store.back()"
       >
-        Voltar aos grupos
+        {{ full ? 'Voltar à revisão' : 'Voltar aos grupos' }}
       </VBtn>
       <VBtn
         variant="elevated"
         size="large"
         prepend-icon="ri-upload-cloud-2-line"
         :loading="store.actionLoading || store.healthLoading"
-        :disabled="!connected || !store.validRows.length || !store.selectedGroups.length"
+        :disabled="!connected || !store.validRows.length || !groupCount"
         @click="store.startImport()"
       >
         Importar {{ store.validRows.length }} usuário(s)

@@ -17,6 +17,7 @@ export class AuditLogService {
       event: 'import_job_finished',
       jobId: job.id,
       sourceJobId: job.sourceJobId,
+      mode: job.mode,
       fileName: job.fileName,
       realm: job.realm,
       status: job.status,

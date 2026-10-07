@@ -58,4 +58,41 @@ describe('GroupsService', () => {
     expect(found).toEqual([{ id: 'g2', name: 'ROLE_PORTAL_USER', path: '/APP.PORTAL/ROLE_PORTAL_USER' }]);
     expect(missing).toEqual(['nao-existe']);
   });
+
+  describe('resolvePaths', () => {
+    it('resolve o path exato e, sem ele, o único igual sem diferenciar maiúsculas', async () => {
+      const { svc } = setup();
+      const result = await svc.resolvePaths(['/APP.PORTAL/ROLE_PORTAL_USER', '/app.portal/role_portal_admin']);
+      expect(result.get('/APP.PORTAL/ROLE_PORTAL_USER')?.ref?.id).toBe('g2');
+      expect(result.get('/app.portal/role_portal_admin')?.ref).toEqual({
+        id: 'g3',
+        name: 'ROLE_PORTAL_ADMIN',
+        path: '/APP.PORTAL/ROLE_PORTAL_ADMIN',
+      });
+    });
+
+    it('indica inexistente, mais de um nível e ambiguidade de maiúsculas', async () => {
+      const ambiguous: KcGroup[] = [
+        ...tree,
+        { id: 'g4', name: 'APP.X', path: '/APP.X', subGroups: [{ id: 'g5', name: 'Role', path: '/APP.X/Role' }] },
+        { id: 'g6', name: 'app.x', path: '/app.x', subGroups: [{ id: 'g7', name: 'ROLE', path: '/app.x/ROLE' }] },
+      ];
+      const kc = { getGroupTree: vi.fn(async () => ambiguous) };
+      const svc = new GroupsService(kc as unknown as KeycloakAdminClient, 300, () => 0);
+      const result = await svc.resolvePaths(['/APP.PORTAL/NAO_EXISTE', '/APP.PORTAL/A/B', '/App.X/role', '/APP.PORTAL']);
+      expect(result.get('/APP.PORTAL/NAO_EXISTE')?.motivo).toBe('Grupo não existe no realm');
+      expect(result.get('/APP.PORTAL/A/B')?.motivo).toContain('Apenas um nível');
+      expect(result.get('/App.X/role')?.motivo).toContain('mais de um grupo');
+      expect(result.get('/APP.PORTAL')?.motivo).toContain('Apenas um nível');
+    });
+
+    it('recarrega o cache uma vez quando algum path não é encontrado', async () => {
+      const { svc, kc } = setup();
+      await svc.getTree();
+      await svc.resolvePaths(['/APP.PORTAL/ROLE_PORTAL_USER']);
+      expect(kc.getGroupTree).toHaveBeenCalledTimes(1);
+      await svc.resolvePaths(['/APP.PORTAL/NOVO']);
+      expect(kc.getGroupTree).toHaveBeenCalledTimes(2);
+    });
+  });
 });
