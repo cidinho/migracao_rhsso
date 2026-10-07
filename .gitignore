@@ -19,5 +19,11 @@ Thumbs.db
 # Artefatos de build incremental do TypeScript
 *.tsbuildinfo
 
+# Scripts ficam só locais: o firewall corporativo bloqueia o download de repositórios com eles
+*.sh
+*.bat
+*.cmd
+*.ps1
+
 # Template Materio original (o frontend é uma cópia adaptada)
 materio-vuetify-nuxtjs-admin-template-free-v1.1.0/
