@@ -379,9 +379,7 @@ PORT=3000
 
 ## 8. Execução
 
-**Atalho:** os scripts `start.sh` e `start.bat` sobem backend e frontend juntos. Eles instalam as dependências se `node_modules` não existir e avisam se o `backend/.env` estiver faltando.
-
-> Os scripts **não estão no repositório**: o firewall corporativo bloqueia o download de repositórios com arquivos `.sh` e `.bat`, por isso eles são ignorados pelo git (`.gitignore`) e existem só nas cópias locais. Sem eles, use os comandos manuais das seções abaixo.
+**Atalho:** os scripts na raiz do repositório sobem backend e frontend juntos. Eles instalam as dependências se `node_modules` não existir e avisam se o `backend/.env` estiver faltando.
 
 ```bash
 ./start.sh          # Linux, macOS ou Git Bash: saída dos dois no mesmo terminal, Ctrl+C encerra ambos
@@ -462,57 +460,6 @@ O script cria o realm `importador-teste` aplicando os passos da seção [6.2](#6
 - os usuários `bsilva` (sem grupo), `csouza` (com parte dos grupos) e `dlima` (com todos e a ação `CONFIGURE_TOTP`).
 
 No fim, ele imprime as linhas para o `backend/.env`, com o segredo gerado. O script não altera outros realms. Para apagar e recriar o realm de teste, rode com `-e RESET=1` no `docker exec`.
-
-> Assim como os scripts de start, o `keycloak16-setup.sh` **não está no repositório**, pelo mesmo bloqueio do firewall. Se você não tem uma cópia local, prepare o realm com os comandos abaixo, digitados dentro do container (`docker exec -it keycloak16 bash`). Eles fazem o mesmo que o script; para transformá-los de novo em script, salve-os em `backend/test/e2e/keycloak16-setup.sh` com `#!/bin/bash` e `set -euo pipefail` no início.
-
-<details>
-<summary>Comandos para preparar o realm de teste manualmente</summary>
-
-```bash
-kc() { /opt/jboss/keycloak/bin/kcadm.sh "$@" --config /tmp/kcadm.config; }
-R=importador-teste C=importador-usuarios
-
-# Login como admin do realm master (usuário e senha definidos no docker run)
-kc config credentials --server http://localhost:8080/auth --realm master \
-  --user "$KEYCLOAK_USER" --password "$KEYCLOAK_PASSWORD"
-
-# Realm (para recriar: kc delete realms/$R antes)
-kc create realms -s realm=$R -s enabled=true \
-  -s duplicateEmailsAllowed=true -s loginWithEmailAllowed=false -s resetPasswordAllowed=true
-kc update authentication/required-actions/UPDATE_PROFILE -r $R -s enabled=true
-
-# Grupos: "-i" devolve o ID, usado para criar os subgrupos
-portal=$(kc create groups -r $R -s name=APP.PORTAL -i)
-user=$(kc create groups/$portal/children -r $R -s name=ROLE_PORTAL_USER -i)
-admin=$(kc create groups/$portal/children -r $R -s name=ROLE_PORTAL_ADMIN -i)
-kc create groups/$admin/children -r $R -s name=ROLE_PORTAL_AUDITOR
-fin=$(kc create groups -r $R -s name=APP.FINANCEIRO -i)
-kc create groups/$fin/children -r $R -s name=ROLE_FIN_CONSULTA
-kc create groups/$fin/children -r $R -s name=ROLE_FIN_APROVADOR
-kc create groups -r $R -s name=Colaboradores
-
-# Client confidencial com service account e os três papéis de realm-management
-cid=$(kc create clients -r $R -s clientId=$C -s enabled=true -s publicClient=false \
-  -s serviceAccountsEnabled=true -s standardFlowEnabled=false -s directAccessGrantsEnabled=false \
-  -s clientAuthenticatorType=client-secret -i)
-kc add-roles -r $R --uusername service-account-$C --cclientid realm-management \
-  --rolename manage-users --rolename view-users --rolename query-groups
-
-# Usuários pré-existentes: sem grupo, com parte dos grupos e com todos (e outra ação obrigatória)
-kc create users -r $R -s username=bsilva -s email=bsilva@exemplo.com -s firstName=Bruno -s lastName=Silva -s enabled=true
-u=$(kc create users -r $R -s username=csouza -s email=csouza@exemplo.com -s firstName=Carla -s lastName=Souza -s enabled=true -i)
-kc update users/$u/groups/$user -r $R -s realm=$R -s userId=$u -s groupId=$user -n
-u=$(kc create users -r $R -s username=dlima -s email=dlima@exemplo.com -s firstName=Daniel -s lastName=Lima \
-  -s enabled=true -s 'requiredActions=["CONFIGURE_TOTP"]' -i)
-kc update users/$u/groups/$user -r $R -s realm=$R -s userId=$u -s groupId=$user -n
-kc update users/$u/groups/$admin -r $R -s realm=$R -s userId=$u -s groupId=$admin -n
-
-# Gera o segredo do client e mostra o valor para o backend/.env
-kc create clients/$cid/client-secret -r $R
-kc get clients/$cid/client-secret -r $R --fields value --format csv --noquotes
-```
-
-</details>
 
 ### 8.3 Build e produção
 
