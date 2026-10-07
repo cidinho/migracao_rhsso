@@ -1,5 +1,5 @@
 import iconv from 'iconv-lite';
-import { CsvFileError, parseCsv, splitName, TEMPLATE_CSV } from './csv-import.js';
+import { CsvFileError, parseCsv, splitName, TEMPLATE_CSV, TEMPLATE_FULL_CSV } from './csv-import.js';
 
 const limits = { maxBytes: 5 * 1024 * 1024, maxRows: 10_000 };
 
@@ -93,6 +93,60 @@ describe('parseCsv', () => {
     expect(result.rows[3].errors).toEqual(['E-mail com formato inválido']);
     expect(result.rows[4]).toMatchObject({ line: 6, errors: ['UID duplicado (já aparece na linha 2)'] });
     expect(result.rows[5].errors).toEqual([]);
+  });
+});
+
+describe('parseCsv na importação completa', () => {
+  it('lê as colunas de grupo raiz e os subgrupos separados por "|"', () => {
+    const csv = [
+      'UID;NOME;Email;APP.PORTAL;APP.FINANCEIRO',
+      't_a1;Ana Lima;ana@exemplo.com; ROLE_PORTAL_USER | ROLE_PORTAL_ADMIN |;ROLE_FIN_VIEW',
+      't_b2;Bia Reis;bia@exemplo.com;ROLE_PORTAL_USER|ROLE_PORTAL_USER;',
+    ].join('\n');
+    const result = parseCsv(Buffer.from(csv), 'u.csv', limits, 'completa');
+    expect(result.mode).toBe('completa');
+    expect(result.groupColumns).toEqual(['APP.PORTAL', 'APP.FINANCEIRO']);
+    expect(result.rows[0].groups).toEqual([
+      '/APP.PORTAL/ROLE_PORTAL_USER',
+      '/APP.PORTAL/ROLE_PORTAL_ADMIN',
+      '/APP.FINANCEIRO/ROLE_FIN_VIEW',
+    ]);
+    expect(result.rows[1].groups).toEqual(['/APP.PORTAL/ROLE_PORTAL_USER']);
+    expect(result.invalidCount).toBe(0);
+  });
+
+  it('combina colunas repetidas do mesmo grupo raiz e mantém nomes com "/" para serem sinalizados', () => {
+    const csv = 'UID,NOME,Email,APP.PORTAL,APP.PORTAL\nt_a1,Ana,ana@exemplo.com,ROLE_A,ROLE_B|X/Y\n';
+    const result = parseCsv(Buffer.from(csv), 'u.csv', limits, 'completa');
+    expect(result.groupColumns).toEqual(['APP.PORTAL']);
+    expect(result.rows[0].groups).toEqual(['/APP.PORTAL/ROLE_A', '/APP.PORTAL/ROLE_B', '/APP.PORTAL/X/Y']);
+  });
+
+  it('marca a linha sem nenhum grupo como inválida', () => {
+    const csv = 'UID;NOME;Email;APP.PORTAL\nt_a1;Ana;ana@exemplo.com; | \n';
+    const result = parseCsv(Buffer.from(csv), 'u.csv', limits, 'completa');
+    expect(result.rows[0].errors).toEqual(['Nenhum grupo informado']);
+  });
+
+  it('rejeita planilha sem coluna de grupo', () => {
+    const err = expectFileError(
+      () => parseCsv(Buffer.from('UID;NOME;Email\na;Ana;a@exemplo.com\n'), 'u.csv', limits, 'completa'),
+      'MISSING_COLUMNS',
+    );
+    expect(err.message).toContain('coluna de grupo');
+  });
+
+  it('aceita o modelo da importação completa', () => {
+    const result = parseCsv(Buffer.from(TEMPLATE_FULL_CSV, 'utf8'), 'modelo.csv', limits, 'completa');
+    expect(result.validCount).toBe(1);
+    expect(result.rows[0].groups).toEqual(['/APP.PORTAL/ROLE_PORTAL_USER', '/APP.PORTAL/ROLE_PORTAL_ADMIN']);
+  });
+
+  it('na importação simples ignora colunas extras e não lê grupos', () => {
+    const csv = 'UID;NOME;Email;APP.PORTAL\nt_a1;Ana;ana@exemplo.com;ROLE_A\n';
+    const result = parseCsv(Buffer.from(csv), 'u.csv', limits);
+    expect(result.groupColumns).toEqual([]);
+    expect(result.rows[0].groups).toBeUndefined();
   });
 });
 

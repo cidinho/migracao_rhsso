@@ -41,7 +41,8 @@ export class ImportProcessor {
       }
     }
 
-    for (const group of job.groups) {
+    const rowGroups = row.groups ?? job.groups;
+    for (const group of rowGroups) {
       if (progress.groups.has(group.id)) continue;
       if (!progress.created && job.members.get(group.id)?.has(row.username)) {
         progress.groups.set(group.id, { id: group.id, path: group.path, status: 'JA_POSSUIA' });
@@ -56,7 +57,7 @@ export class ImportProcessor {
       }
     }
 
-    const grupos = job.groups.map((g) => progress.groups.get(g.id)!);
+    const grupos = rowGroups.map((g) => progress.groups.get(g.id)!);
     const failed = grupos.filter((g) => g.status === 'FALHOU').length;
     let status: RowStatus;
     if (failed) status = 'ERRO';
@@ -67,8 +68,11 @@ export class ImportProcessor {
     return {
       ...this.base(job, row, progress),
       status,
-      grupos,
-      avisos: progress.existing ? divergences(row, progress.existing) : [],
+      grupos: [...grupos, ...missingResults(row)],
+      avisos: [
+        ...(row.missingGroups ?? []).map((m) => `Grupo ${m.path} não foi atribuído: ${m.motivo}.`),
+        ...(progress.existing ? divergences(row, progress.existing) : []),
+      ],
       erro: failed
         ? `Falha ao atribuir ${failed} grupo(s)${progress.created ? '; o usuário foi criado' : ''}.`
         : undefined,
@@ -81,7 +85,7 @@ export class ImportProcessor {
     return {
       ...this.base(job, row, progress),
       status: 'ERRO',
-      grupos: [...progress.groups.values()],
+      grupos: [...progress.groups.values(), ...missingResults(row)],
       avisos: [],
       erro: errorMessage(err),
     };
@@ -119,6 +123,10 @@ export class ImportProcessor {
       acoesObrigatorias: progress.created ? [...job.requiredActions] : [],
     };
   }
+}
+
+function missingResults(row: ImportRow): GroupResult[] {
+  return (row.missingGroups ?? []).map((m) => ({ id: m.path, path: m.path, status: 'INEXISTENTE', erro: m.motivo }));
 }
 
 function divergences(row: ImportRow, user: KcUser): string[] {

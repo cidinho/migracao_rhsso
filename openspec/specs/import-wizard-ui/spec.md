@@ -62,7 +62,7 @@ Durante a execução, o frontend SHALL exibir uma barra de progresso, as contage
 - **THEN** a interface mostra um alerta explicando o bloqueio e oferece o botão "Retomar"
 
 ### Requirement: Tela de resultado
-A etapa de Resultado SHALL mostrar cartões com os totais por status (Criados, Grupos adicionados, Sem alteração, Erros) e uma tabela filtrável por status, com o detalhe dos grupos de cada usuário. A tela MUST oferecer "Baixar relatório", "Reprocessar erros" (quando houver erros) e "Nova importação".
+A etapa de Resultado SHALL mostrar cartões com os totais por status (Criados, Grupos adicionados, Sem alteração, Erros e, quando houver, Ignorados e Não processados) e uma tabela filtrável por status, com o detalhe dos grupos de cada usuário, incluindo os grupos inexistentes. A tela MUST oferecer "Baixar relatório", "Reprocessar erros" (quando houver erros) e "Nova importação".
 
 #### Scenario: Usuário criado
 - **WHEN** uma linha terminou como `CRIADO`
@@ -75,6 +75,14 @@ A etapa de Resultado SHALL mostrar cartões com os totais por status (Criados, G
 #### Scenario: Filtrar erros
 - **WHEN** o usuário clica no cartão "Erros"
 - **THEN** a tabela passa a mostrar apenas as linhas com status `ERRO`
+
+#### Scenario: Linhas ignoradas
+- **WHEN** a planilha tinha 2 linhas inválidas
+- **THEN** o cartão "Ignorados" mostra 2 e a tabela exibe essas linhas com o motivo
+
+#### Scenario: Grupo inexistente
+- **WHEN** uma linha da importação completa citou um grupo inexistente
+- **THEN** o detalhe da linha mostra esse grupo como "Inexistente", distinto por ícone e texto dos grupos atribuídos
 
 ### Requirement: Tema e acessibilidade
 O frontend SHALL usar o template Materio com o tema **dark** como padrão, MUST indicar status por texto e ícone além da cor e MUST manter foco visível e ordem de tabulação coerente em todos os controles.
